@@ -1,0 +1,101 @@
+plugins {
+    id 'java'
+}
+
+// ================= CONFIGURAÇÕES GERAIS =================
+group 'com.meuprojeto'
+version '1.0'
+
+// Força compatibilidade com Java antigo (BlackBerry)
+sourceCompatibility = 1.4
+targetCompatibility = 1.4
+
+// 1. Define a pasta onde estão as ferramentas (deps)
+def wtkHome = layout.projectDirectory.dir("deps")
+def binDir = wtkHome.dir("bin").asFile
+
+// 2. BUSCA AUTOMÁTICA DO PREVERIFY (Versão Java Puro - Sem erro de Import)
+def preverifyExe = binDir.listFiles()?.find { file ->
+    def name = file.name.toLowerCase()
+
+    // Verifica se é Windows sem precisar de plugins externos
+    def isWindows = System.getProperty("os.name").toLowerCase().contains("windows")
+
+    // Regra: Tem que começar com "preverify"
+    if (!name.startsWith("preverify")) return false
+
+    // Se for Windows, obriga a terminar com .exe
+    if (isWindows) {
+        return name.endsWith(".exe")
+    }
+
+    // Se for Linux/Mac, aceita qualquer coisa
+    return true
+}
+
+// 3. Trava de segurança
+if (preverifyExe == null || !preverifyExe.exists()) {
+    throw new GradleException("ERRO FATAL: Não encontrei 'preverify' em: " + binDir)
+}
+
+println "Ferramenta J2ME encontrada: " + preverifyExe.name
+
+// ================= DEPENDÊNCIAS =================
+repositories {
+    mavenCentral()
+}
+
+dependencies {
+    compileOnly fileTree(dir: 'deps/lib', include: ['*.jar'])
+}
+
+// ================= TAREFAS =================
+
+// 1. Cria o JAR inicial (Cru)
+jar {
+    archiveFileName = 'app-unverified.jar'
+    exclude 'META-INF/**'
+}
+
+// 2. Roda o Preverify
+tasks.register('preverify', Exec) {
+    group = "J2ME"
+    dependsOn jar
+
+    def inputJar = jar.archiveFile.get().asFile
+    def outputDir = layout.buildDirectory.dir("preverified").get().asFile
+
+    doFirst { mkdir outputDir }
+
+    // Classpath manual
+    def libPath = fileTree(dir: 'deps/lib', include: ['*.jar']).files.join(";")
+
+    commandLine preverifyExe, '-classpath', libPath, '-d', outputDir, inputJar
+}
+
+// 3. Gera o JAR FINAL (Na pasta padrão build/libs)
+tasks.register('dist', Zip) {
+    group = "J2ME"
+    description = "Gera o JAR final pronto para o celular em build/libs"
+    dependsOn preverify
+
+    // O NOME DO SEU APP VAI AQUI:
+    archiveFileName = "MeuAppBlackBerry.jar"
+
+    // CONVENÇÃO PADRÃO GRADLE: build/libs
+    destinationDirectory = layout.buildDirectory.dir("libs")
+
+    // A. Pega o conteúdo verificado
+    def preverifiedJar = layout.buildDirectory.file("preverified/app-unverified.jar")
+    from(zipTree(preverifiedJar)) {
+        exclude 'META-INF/**'
+    }
+
+    // B. Pega o SEU manifesto limpo
+    from('src/main/resources') {
+        include 'META-INF/MANIFEST.MF'
+    }
+
+    setMetadataCharset("UTF-8")
+    reproducibleFileOrder = true
+}
